@@ -1,0 +1,12 @@
+--- a/include/adaptive/bit_vector/leaf_bv_node.hpp
++++ b/include/adaptive/bit_vector/leaf_bv_node.hpp
+@@ -79,6 +79,9 @@
+     if (size_ != 0) {
+         bit_util::copy_bits(words_.data(), 0, words, offset, size_);
+     }
++    if (size_ % word_bits != 0) {
++        words_[word_count() - 1] &= (uint64_t{1} << (size_ % word_bits)) - 1;
++    }
+     for (uint32_t i = 0; i < word_count(); ++i) {
+         ones_ += bit_util::popcount(words_[i]);
+     }
