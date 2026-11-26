@@ -51,6 +51,7 @@ target_sources(adaptive
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/adaptive/bit_vector/bv_node_ptr.hpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/adaptive/bit_vector/dynamic_bv_node.hpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/adaptive/bit_vector/leaf_bv_node.hpp>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/adaptive/bit_vector/shared_buffer.hpp>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/adaptive/bit_vector/static_bv_node.hpp>
 )
 

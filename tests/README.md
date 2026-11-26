@@ -6,7 +6,7 @@ Con CMake: `cmake -B build -DADAPTIVE_BUILD_TESTS=ON && cmake --build build && c
 | Archivo | Que verifica |
 |---|---|
 | `test_bit_util.cpp` | `popcount`, `select_in_word`, `next_in_word`, `copy_bits` (buffers de tamano exacto: ASan detecta lecturas/escrituras fuera de rango) |
-| `test_static_bv.cpp` | `static_bv_node` vs. referencia: tamanos de borde, 9 patrones de bits, 4 `BlockFactor`, ambos constructores. **Debe seguir pasando cuando pase a ser una vista.** |
+| `test_static_bv.cpp` | `static_bv_node` (vista) y `shared_buffer` (almacenamiento, incl. refcount) vs. referencia: tamanos de borde, 9 patrones de bits, 4 `BlockFactor`, ambos constructores. **Debe seguir pasando cuando pase a ser una vista.** |
 | `test_leaf_bv.cpp` | `leaf_bv_node`: constructor con offset, insert/erase/write aleatorios, llenar/vaciar |
 | `test_bit_vector.cpp` | Test diferencial del arbol completo con 4 configuraciones, 7 mezclas de carga, varios `theta`; ademas crecer desde vacio, vaciar por completo, inserciones secuenciales, ciclos flatten/split, copia y serializacion |
 | `diag_split_cost.cpp` | **No es un test.** Mide allocs, bytes pedidos y pico de heap durante los primeros splits (el "antes" de la memoria) |
