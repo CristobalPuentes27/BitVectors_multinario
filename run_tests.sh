@@ -11,7 +11,7 @@
 #   SANITIZE=0 ./run_tests.sh      # sin sanitizers (mas rapido, menos chequeos)
 #   APPLY_KNOWN_FIXES=1 ./run_tests.sh   # prueba sobre una copia con tests/known_issues/*.patch aplicados
 #   CXX=clang++ ./run_tests.sh
-#   ./run_tests.sh bit_vector      # solo un test (bit_util | static_bv | leaf_bv | bit_vector)
+#   ./run_tests.sh bit_vector      # solo un test (bit_util | static_bv | static_views | leaf_bv | bit_vector)
 #
 # IMPORTANTE: los tests se compilan SIN -DNDEBUG para que ADAPTIVE_ASSUME siga siendo un assert() real.
 set -u
@@ -36,7 +36,7 @@ if [ "${APPLY_KNOWN_FIXES:-0}" = "1" ]; then
 fi
 FLAGS+=(-I"$INC")
 
-ALL=(bit_util static_bv leaf_bv bit_vector)
+ALL=(bit_util static_bv static_views leaf_bv bit_vector)
 SEL=("${@:-${ALL[@]}}")
 status=0
 for name in "${SEL[@]}"; do

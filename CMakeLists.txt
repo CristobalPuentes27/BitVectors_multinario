@@ -133,7 +133,7 @@ option(ADAPTIVE_TEST_SANITIZE "Build tests with AddressSanitizer and UBSan" ON)
 
 if(ADAPTIVE_BUILD_TESTS)
   enable_testing()
-  foreach(test_name IN ITEMS bit_util static_bv leaf_bv bit_vector)
+  foreach(test_name IN ITEMS bit_util static_bv static_views leaf_bv bit_vector)
     add_executable(adaptive_test_${test_name} tests/test_${test_name}.cpp)
     # No se enlaza contra adaptive::adaptive porque esa interfaz define NDEBUG en Release.
     target_include_directories(adaptive_test_${test_name} PRIVATE
@@ -156,4 +156,9 @@ if(ADAPTIVE_BUILD_TESTS)
   add_executable(adaptive_diag_split_cost tests/diag_split_cost.cpp)
   target_link_libraries(adaptive_diag_split_cost PRIVATE adaptive::adaptive)
   set_target_properties(adaptive_diag_split_cost PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench/adaptive)
+
+  # Diagnostico: ns por consulta sobre una raiz estatica pura (costo de la indireccion vista->buffer).
+  add_executable(adaptive_diag_static_query tests/diag_static_query.cpp)
+  target_link_libraries(adaptive_diag_static_query PRIVATE adaptive::adaptive)
+  set_target_properties(adaptive_diag_static_query PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench/adaptive)
 endif()
