@@ -30,6 +30,7 @@ Chile. Beauchef 851, Santiago, Chile. gnavarro@dcc.uchile.cl
 #include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #include "adaptive/assert.hpp"
 #include "adaptive/bit_util.hpp"
@@ -48,7 +49,11 @@ template <class NodePtr, uint32_t TargetArity = 64> class dynamic_bv_node {
     static uint64_t weight_lowerbound(uint64_t level);
 
     dynamic_bv_node() = default;
+    // Parte n bits (con `ones` unos) copiando los bits de `data` a cada hijo.
     dynamic_bv_node(const uint64_t* data, uint64_t n, uint64_t ones, uint64_t level, bool is_root);
+    // Parte una hoja estatica (vista) SIN copiar los bits de los hijos estaticos: cada uno es una vista del
+    // mismo buffer que `view`. Solo los hijos pequenos (hojas dinamicas, de tamano acotado) se copian.
+    template <class Static> dynamic_bv_node(const Static& view, uint64_t level, bool is_root);
 
     dynamic_bv_node(const dynamic_bv_node&) = delete;
     dynamic_bv_node& operator=(const dynamic_bv_node&) = delete;
@@ -114,12 +119,14 @@ template <class NodePtr, uint32_t TargetArity = 64> class dynamic_bv_node {
     bool merge_children(uint32_t l, uint32_t r, uint64_t level);
 
     void recompute_metadata();
+    // Reparte n bits entre los hijos (misma regla de siempre); make_child(l, len) crea el hijo [l, l+len).
+    template <class MakeChild> void partition(uint64_t n, uint64_t level, bool is_root, MakeChild&& make_child);
 };
 
 template <class NodePtr, uint32_t TargetArity>
-dynamic_bv_node<NodePtr, TargetArity>::dynamic_bv_node(const uint64_t* data, uint64_t n, uint64_t ones, uint64_t level,
-                                                       bool is_root)
-    : size_(n), ones_(ones) {
+template <class MakeChild>
+void dynamic_bv_node<NodePtr, TargetArity>::partition(uint64_t n, uint64_t level, bool is_root,
+                                                      MakeChild&& make_child) {
     ADAPTIVE_ASSUME(level != 0);
 
     const uint64_t total_words = (n + bit_util::word_bits - 1) / bit_util::word_bits;
@@ -144,14 +151,46 @@ dynamic_bv_node<NodePtr, TargetArity>::dynamic_bv_node(const uint64_t* data, uin
         const uint64_t len = r - l;
         ADAPTIVE_ASSUME(len < child_bound);
         ADAPTIVE_ASSUME(len >= child_bound / 4);
-        if (len < NodePtr::max_leaf_bits()) {
-            children_[k] = NodePtr::leaf(data + l / bit_util::word_bits, static_cast<uint32_t>(len));
-        } else {
-            children_[k] = NodePtr::stat(data + l / bit_util::word_bits, len);
-        }
+        children_[k] = make_child(l, len);
         ++child_count_;
         words_prefix += words_k;
     }
+}
+
+template <class NodePtr, uint32_t TargetArity>
+dynamic_bv_node<NodePtr, TargetArity>::dynamic_bv_node(const uint64_t* data, uint64_t n, uint64_t ones, uint64_t level,
+                                                       bool is_root)
+    : size_(n), ones_(ones) {
+    partition(n, level, is_root, [&](uint64_t l, uint64_t len) -> NodePtr {
+        if (len < NodePtr::max_leaf_bits()) {
+            return NodePtr::leaf(data + l / bit_util::word_bits, static_cast<uint32_t>(len));
+        }
+        return NodePtr::stat(data + l / bit_util::word_bits, len);
+    });
+    recompute_metadata();
+}
+
+template <class NodePtr, uint32_t TargetArity>
+template <class Static>
+dynamic_bv_node<NodePtr, TargetArity>::dynamic_bv_node(const Static& view, uint64_t level, bool is_root)
+    : size_(view.size()), ones_(view.ones()) {
+    std::vector<uint64_t> tmp; // buffer temporal para copiar las hojas pequenas (una sola asignacion por split)
+    partition(size_, level, is_root, [&](uint64_t l, uint64_t len) -> NodePtr {
+        if (len < NodePtr::max_leaf_bits()) {
+            // Las hojas dinamicas se copian. Los bits sobre `len` en la ultima palabra pertenecen a vistas
+            // vecinas, asi que se enmascaran antes de construir la hoja para que `ones` cuente solo los suyos.
+            const uint64_t words = (len + bit_util::word_bits - 1) / bit_util::word_bits;
+            tmp.assign(words + 1, 0);
+            view.read(l, len, tmp.data(), 0);
+            if (len % bit_util::word_bits != 0) {
+                tmp[words - 1] &= (uint64_t{1} << (len % bit_util::word_bits)) - 1;
+            }
+            tmp[words] = 0;
+            return NodePtr::leaf(tmp.data(), static_cast<uint32_t>(len));
+        }
+        // Hijo estatico: vista [begin + l, begin + l + len) del mismo buffer. Sin copia.
+        return NodePtr::stat(view.buffer_ptr(), view.begin() + l, len);
+    });
     recompute_metadata();
 }
 

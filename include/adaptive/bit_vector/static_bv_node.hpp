@@ -85,6 +85,8 @@ template <uint32_t BlockFactor = 4> class static_bv_node {
     // size() en la ultima palabra pertenecen a otras vistas y NO estan enmascarados.
     const uint64_t* data() const;
     const buffer_type& buffer() const;
+    // Handle NO propietario del buffer, para crear vistas hermanas: static_bv_node(buffer_ptr(), begin, len).
+    buffer_type* buffer_ptr() const;
     uint64_t begin() const;
     uint64_t base_ones() const;
 
@@ -105,12 +107,16 @@ template <uint32_t BlockFactor = 4> class static_bv_node {
 
 template <uint32_t BlockFactor>
 static_bv_node<BlockFactor>::static_bv_node(const uint64_t* words, uint64_t size)
-    : buffer_(new buffer_type(words, size)), begin_(0), len_(size), base_ones_(0), ones_(buffer_->ones()) {}
+    : buffer_(new buffer_type(words, size)), begin_(0), len_(size), base_ones_(0), ones_(buffer_->ones()) {
+    buffer_->add_live(len_);
+}
 
 template <uint32_t BlockFactor>
 static_bv_node<BlockFactor>::static_bv_node(std::vector<uint64_t>&& words, uint64_t size)
     : buffer_(new buffer_type(std::move(words), size)), begin_(0), len_(size), base_ones_(0),
-      ones_(buffer_->ones()) {}
+      ones_(buffer_->ones()) {
+    buffer_->add_live(len_);
+}
 
 template <uint32_t BlockFactor>
 static_bv_node<BlockFactor>::static_bv_node(buffer_type* buffer, uint64_t begin, uint64_t len)
@@ -120,11 +126,13 @@ static_bv_node<BlockFactor>::static_bv_node(buffer_type* buffer, uint64_t begin,
     ADAPTIVE_ASSUME(begin <= buffer->size() && len <= buffer->size() - begin);
 
     buffer_->acquire();
+    buffer_->add_live(len_);
     base_ones_ = buffer_->template rank<true>(begin_);
     ones_ = buffer_->template rank<true>(begin_ + len_) - base_ones_;
 }
 
 template <uint32_t BlockFactor> static_bv_node<BlockFactor>::~static_bv_node() {
+    buffer_->sub_live(len_);
     buffer_type::release(buffer_);
 }
 
@@ -155,6 +163,10 @@ template <uint32_t BlockFactor> const uint64_t* static_bv_node<BlockFactor>::dat
 
 template <uint32_t BlockFactor> const shared_buffer<BlockFactor>& static_bv_node<BlockFactor>::buffer() const {
     return *buffer_;
+}
+
+template <uint32_t BlockFactor> shared_buffer<BlockFactor>* static_bv_node<BlockFactor>::buffer_ptr() const {
+    return buffer_;
 }
 
 template <uint32_t BlockFactor> uint64_t static_bv_node<BlockFactor>::begin() const {

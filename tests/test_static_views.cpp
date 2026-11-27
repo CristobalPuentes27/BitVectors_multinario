@@ -93,6 +93,8 @@ template <uint32_t BF> static void run(t::rng& r) {
                 static_bv_node<BF> v(buf, b, l);
                 check_view(v, bits, b, l, r);
                 CHECK_EQ(buf->refcount(), 2); // creador + esta vista
+                CHECK_EQ(buf->live_bits(), l);       // contabilidad: solo esta vista cubre bits
+                CHECK_EQ(buf->dead_bits(), n - l);
                 if (b % 64 == 0) { // data() apunta a la palabra donde empieza la vista
                     bool ok = true;
                     for (uint64_t k = 0; k < l / 64 && ok; ++k)
@@ -103,6 +105,8 @@ template <uint32_t BF> static void run(t::rng& r) {
                     return;
             }
             CHECK_EQ(buf->refcount(), 1); // todas las vistas destruidas
+            CHECK_EQ(buf->live_bits(), 0);
+            CHECK_EQ(buf->dead_bits(), n);
 
             // 2) subvistas anidadas (vista de una vista) y vista de rango completo
             {
@@ -118,11 +122,13 @@ template <uint32_t BF> static void run(t::rng& r) {
                     check_view(v, bits, b1, l1, r);
                     check_view(w, bits, b1 + b2, l2, r);
                     CHECK_EQ(buf->refcount(), 4); // creador + whole + v + w
+                    CHECK_EQ(buf->live_bits(), n + l1 + l2); // las vistas pueden solaparse: cada una suma su largo
                 }
                 if (t::fail_count() > 0)
                     return;
             }
             CHECK_EQ(buf->refcount(), 1);
+            CHECK_EQ(buf->live_bits(), 0);
 
             // 3) particion en k vistas contiguas (lo que hara split_static); el creador suelta el buffer primero
             {
@@ -150,6 +156,8 @@ template <uint32_t BF> static void run(t::rng& r) {
                 CHECK_EQ(total_len, n); // cubren todo el buffer sin solaparse
                 CHECK_EQ(total_ones, buf->ones());
                 CHECK_EQ(buf->refcount(), 1 + parts.size());
+                CHECK_EQ(buf->live_bits(), n); // la particion cubre todo: nada huerfano
+                CHECK_EQ(buf->dead_bits(), 0);
 
                 shared_buffer<BF>::release(buf); // el creador se va; las vistas mantienen vivo el buffer
                 buf = nullptr;
@@ -163,10 +171,15 @@ template <uint32_t BF> static void run(t::rng& r) {
                 const uint64_t expected = parts.size() * sizeof(static_bv_node<BF>) + buffer_bytes;
                 CHECK(sum <= expected && expected - sum < parts.size());
 
-                // las vistas funcionan tras irse el creador, y se destruyen en orden aleatorio
+                // las vistas funcionan tras irse el creador, y se destruyen en orden aleatorio;
+                // cada vista destruida deja su rango como memoria huerfana mientras otras sigan vivas
+                uint64_t destroyed_bits = 0;
                 while (!parts.empty()) {
                     const size_t idx = r.below(parts.size());
                     CHECK_EQ(parts[idx]->buffer().refcount(), parts.size());
+                    CHECK_EQ(parts[idx]->buffer().live_bits(), n - destroyed_bits);
+                    CHECK_EQ(parts[idx]->buffer().dead_bits(), destroyed_bits);
+                    destroyed_bits += where[idx].second;
                     check_view(*parts[idx], bits, where[idx].first, where[idx].second, r);
                     parts.erase(parts.begin() + static_cast<std::ptrdiff_t>(idx));
                     where.erase(where.begin() + static_cast<std::ptrdiff_t>(idx));

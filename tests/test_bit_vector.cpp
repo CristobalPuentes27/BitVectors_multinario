@@ -39,6 +39,17 @@ template <class BV> class harness {
         CHECK_EQ(bv.ones(), ref.ones());
     }
 
+    // Invariantes de la contabilidad de memoria (paso 6); validos en puntos estables (entre operaciones).
+    void check_report() {
+        const memory_report m = bv.report_memory();
+        CHECK_EQ(m.leaf_bits + m.view_bits, ref.size()); // los bits se reparten entre hojas copiadas y vistas
+        CHECK_EQ(m.buffer_refs, m.static_views);         // toda referencia a un buffer es una vista del arbol
+        CHECK_EQ(m.live_bits, m.view_bits);              // contador de los buffers == suma por recorrido
+        CHECK(m.live_bits <= m.buffer_bits);             // lo huerfano nunca es negativo
+        const uint64_t sb = bv.space_bytes() - sizeof(bv); // space_bytes() reparte cada buffer entre sus vistas
+        CHECK(sb <= m.total_bytes() && m.total_bytes() - sb <= m.static_views);
+    }
+
     // ---- actualizaciones
     void do_insert(uint64_t i, bool v) {
         bv.insert(i, v);
@@ -126,6 +137,7 @@ template <class BV> class harness {
     // verificacion exhaustiva (tambien dispara flattens por la cantidad de accesos)
     void verify_full(bool all_positions) {
         check_sizes();
+        check_report();
         const uint64_t n = ref.size();
         if (n == 0)
             return;
@@ -195,6 +207,9 @@ static const mix mixes[] = {
     {"fondo", 0.45, 0.45, pos_back, 50, 300},
     {"hotspot", 0.45, 0.45, pos_hotspot, 80, 600},
     {"muchas_consultas", 0.45, 0.45, pos_uniform, 3, 3000},
+    // sin borrados no hay underflow ni merge_with: no activa el bug conocido de leaf_bv_node (ver known_issues)
+    {"sin_borrados", 0.70, 0.00, pos_uniform, 60, 300},
+    {"sin_borrados_hotspot", 0.70, 0.00, pos_hotspot, 80, 600},
 };
 
 template <class BV>
@@ -228,6 +243,7 @@ static void run_scenario(const std::string& cfg, uint64_t seed, uint64_t n0, int
                 h.do_write(pick_pos(h.r, m.pos, n, h.hot_center), h.r.next() & 1);
             }
         }
+        h.check_report();
         // --- rafaga de consultas (variadas y, a veces, concentradas en una region)
         const uint64_t qb = h.r.below(m.max_query_burst + 1);
         if (h.r.chance(0.4)) {
@@ -244,6 +260,42 @@ static void run_scenario(const std::string& cfg, uint64_t seed, uint64_t n0, int
 }
 
 // ------------------------------------------------- escenarios especiales
+// Propiedad exacta del split sin copia: partiendo de UN buffer, escribir (sin consultas: no hay flatten) solo
+// convierte rangos de vistas en hojas copiadas. Nunca se crea otro buffer y los bits de las hojas son exactamente
+// la memoria huerfana del buffer original.
+template <class BV> static void scenario_single_buffer(const std::string& cfg, uint64_t seed, uint64_t n0) {
+    t::set_context(cfg + " un solo buffer seed=" + std::to_string(seed) + " n0=" + std::to_string(n0));
+    harness<BV> h(seed);
+    h.init(t::make_bits(h.r, n0, t::k_random));
+    {
+        const memory_report m = h.bv.report_memory();
+        CHECK_EQ(m.buffers, 1);
+        CHECK_EQ(m.static_views, 1);
+        CHECK_EQ(m.dead_bits(), 0);
+        CHECK_EQ(m.leaf_bits, 0);
+    }
+    uint64_t prev_dead = 0;
+    for (int k = 0; k < 60 && h.ok(); ++k) {
+        h.do_write(h.r.below(h.ref.size()), h.r.next() & 1);
+        const memory_report m = h.bv.report_memory();
+        if (m.buffers == 0) {
+            // cuando muere la ultima vista, el buffer se libera solo (refcount): no queda memoria huerfana
+            CHECK_EQ(m.view_bits, 0);
+            CHECK_EQ(m.leaf_bits, n0);
+            h.check_report();
+            break;
+        }
+        CHECK_EQ(m.buffers, 1);                  // ningun split creo un buffer nuevo
+        CHECK_EQ(m.dead_bits(), m.leaf_bits);    // lo huerfano son exactamente los bits ya copiados a hojas
+        CHECK_EQ(m.live_bits, n0 - m.leaf_bits);
+        CHECK(m.dead_bits() >= prev_dead);       // solo crece: no hay flatten ni compactacion
+        prev_dead = m.dead_bits();
+        h.check_report();
+    }
+    CHECK(prev_dead > 0); // al menos un rango paso a hoja dinamica
+    h.verify_full(false);
+}
+
 template <class BV> static void scenario_grow_from_empty(const std::string& cfg, uint64_t seed, uint64_t target) {
     t::set_context(cfg + " crecer desde vacio seed=" + std::to_string(seed));
     harness<BV> h(seed);
@@ -389,10 +441,14 @@ static void run_suite(const std::string& cfg, std::vector<uint64_t> sizes, int p
     const int seeds = eff == 0 ? 1 : 2 * eff;
     const uint64_t thetas[] = {1, 100, 1000, 100000};
     uint64_t counter = 0;
+    // ONLY_MIX=<nombre>: solo esa mezcla (y sin los escenarios especiales, que si borran). Util para aislar.
+    const char* only_mix = std::getenv("ONLY_MIX");
     for (int s = 0; s < seeds; ++s) {
         const uint64_t seed = t::env_u64("SEED", 1000) + static_cast<uint64_t>(s) * 7919;
         for (uint64_t n0 : sizes) {
             for (const mix& m : mixes) {
+                if (only_mix && std::string(only_mix) != m.name)
+                    continue;
                 // rotamos patron de bits y theta para cubrir combinaciones sin explosion combinatoria
                 const int kind = static_cast<int>((counter) % t::k_num_kinds);
                 const uint64_t theta = thetas[(counter / 3) % 4];
@@ -402,6 +458,9 @@ static void run_suite(const std::string& cfg, std::vector<uint64_t> sizes, int p
                     return;
             }
         }
+        if (only_mix)
+            continue;
+        scenario_single_buffer<BV>(cfg, seed, sizes.back());
         scenario_grow_from_empty<BV>(cfg, seed, grow_target);
         scenario_shrink_to_empty<BV>(cfg, seed, sizes[sizes.size() / 2]);
         scenario_sequential<BV>(cfg, seed, seq_count);

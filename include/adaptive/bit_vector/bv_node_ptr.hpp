@@ -83,6 +83,12 @@ class bv_node_ptr
 
     static constexpr uint64_t max_leaf_bits();
 
+    bool is_leaf() const;
+    bool is_static() const;
+    bool is_dynamic() const;
+    // Recorre el subarbol en preorden llamando f(nodo) (solo lectura; para estadisticas y diagnostico).
+    template <class F> void walk(F&& f) const;
+
     void split_into(bv_node_ptr* l, bv_node_ptr* r);
     bool merge_with(bv_node_ptr* r, uint64_t level);
 
@@ -308,11 +314,38 @@ void bv_node_ptr<Leaf, Static, Dynamic, TagMask>::flatten() {
 }
 
 template <class Leaf, class Static, class Dynamic, uintptr_t TagMask>
+bool bv_node_ptr<Leaf, Static, Dynamic, TagMask>::is_leaf() const {
+    return !empty() && tag() == node_tag::leaf;
+}
+
+template <class Leaf, class Static, class Dynamic, uintptr_t TagMask>
+bool bv_node_ptr<Leaf, Static, Dynamic, TagMask>::is_static() const {
+    return !empty() && tag() == node_tag::stat;
+}
+
+template <class Leaf, class Static, class Dynamic, uintptr_t TagMask>
+bool bv_node_ptr<Leaf, Static, Dynamic, TagMask>::is_dynamic() const {
+    return !empty() && tag() == node_tag::dynamic;
+}
+
+template <class Leaf, class Static, class Dynamic, uintptr_t TagMask>
+template <class F>
+void bv_node_ptr<Leaf, Static, Dynamic, TagMask>::walk(F&& f) const {
+    f(*this);
+    if (is_dynamic()) {
+        const auto& d = as_dynamic();
+        for (uint32_t k = 0; k < d.child_count(); ++k) {
+            d.child(k).walk(f);
+        }
+    }
+}
+
+template <class Leaf, class Static, class Dynamic, uintptr_t TagMask>
 void bv_node_ptr<Leaf, Static, Dynamic, TagMask>::split_static(uint64_t level, bool is_root) {
     ADAPTIVE_ASSUME(tag() == node_tag::stat);
-    const uint64_t len = as_static().size();
-    const uint64_t n = as_static().ones();
-    auto dyn = bv_node_ptr::dynamic(as_static().data(), len, n, level, is_root);
+    // Los hijos estaticos son vistas del buffer de este nodo: no se copian bits. El buffer sobrevive mientras
+    // alguna vista lo referencie, aunque reset() destruya la vista de este nodo.
+    auto dyn = bv_node_ptr::dynamic(as_static(), level, is_root);
     reset();
     *this = std::move(dyn);
 }

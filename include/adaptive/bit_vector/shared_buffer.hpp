@@ -64,6 +64,15 @@ template <uint32_t BlockFactor = 4> class shared_buffer {
     // Libera una referencia; destruye el buffer cuando llega a 0. `buffer` queda invalido si fue destruido.
     static void release(shared_buffer* buffer);
 
+    // Contabilidad de uso: bits del buffer cubiertos por alguna vista. Las vistas (static_bv_node) lo actualizan
+    // al crearse y destruirse. dead_bits() son los bits que ninguna vista referencia: memoria huerfana, retenida
+    // mientras quede alguna otra vista del buffer. Solo es consistente en puntos estables: durante un split las
+    // vistas del padre y de los hijos coexisten un instante (live_bits puede superar size() transitoriamente).
+    uint64_t live_bits() const;
+    uint64_t dead_bits() const;
+    void add_live(uint64_t bits);
+    void sub_live(uint64_t bits);
+
     uint64_t size() const;
     uint64_t ones() const;
     uint64_t space_bytes() const;
@@ -78,6 +87,7 @@ template <uint32_t BlockFactor = 4> class shared_buffer {
 
   private:
     uint32_t refcount_ = 1;
+    uint64_t live_bits_ = 0;
     uint64_t size_ = 0;
     uint64_t ones_ = 0;
     std::vector<uint64_t> words_;
@@ -121,6 +131,23 @@ shared_buffer<BlockFactor>::shared_buffer(std::vector<uint64_t>&& words, uint64_
 
 template <uint32_t BlockFactor> uint32_t shared_buffer<BlockFactor>::refcount() const {
     return refcount_;
+}
+
+template <uint32_t BlockFactor> uint64_t shared_buffer<BlockFactor>::live_bits() const {
+    return live_bits_;
+}
+
+template <uint32_t BlockFactor> uint64_t shared_buffer<BlockFactor>::dead_bits() const {
+    return live_bits_ <= size_ ? size_ - live_bits_ : 0;
+}
+
+template <uint32_t BlockFactor> void shared_buffer<BlockFactor>::add_live(uint64_t bits) {
+    live_bits_ += bits;
+}
+
+template <uint32_t BlockFactor> void shared_buffer<BlockFactor>::sub_live(uint64_t bits) {
+    ADAPTIVE_ASSUME(bits <= live_bits_);
+    live_bits_ -= bits;
 }
 
 template <uint32_t BlockFactor> void shared_buffer<BlockFactor>::acquire() {

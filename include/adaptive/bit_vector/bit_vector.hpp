@@ -25,14 +25,17 @@ Chile. Beauchef 851, Santiago, Chile. gnavarro@dcc.uchile.cl
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <istream>
 #include <ostream>
+#include <vector>
 
 #include "adaptive/assert.hpp"
 #include "adaptive/bit_vector/dynamic_bv_node.hpp"
 #include "adaptive/bit_vector/leaf_bv_node.hpp"
 #include "adaptive/bit_vector/bv_node_ptr.hpp"
+#include "adaptive/bit_vector/memory_report.hpp"
 #include "adaptive/bit_vector/static_bv_node.hpp"
 
 namespace adaptive {
@@ -76,6 +79,8 @@ template <uint32_t TargetArity = 64, uint32_t MaxLeafBits = 8192, uint32_t Epsil
     uint64_t ones() const;
     uint64_t level() const;
     uint64_t space_bytes() const;
+    // Desglose de memoria (recorre el arbol: O(nodos)); ver memory_report.hpp.
+    memory_report report_memory() const;
 
     bool access(uint64_t i);
     bool operator[](uint64_t i);
@@ -182,6 +187,37 @@ uint64_t bit_vector<TargetArity, MaxLeafBits, Epsilon>::level() const {
 template <uint32_t TargetArity, uint32_t MaxLeafBits, uint32_t Epsilon>
 uint64_t bit_vector<TargetArity, MaxLeafBits, Epsilon>::space_bytes() const {
     return sizeof(*this) + root_.space_bytes();
+}
+
+template <uint32_t TargetArity, uint32_t MaxLeafBits, uint32_t Epsilon>
+memory_report bit_vector<TargetArity, MaxLeafBits, Epsilon>::report_memory() const {
+    memory_report r;
+    std::vector<const typename static_type::buffer_type*> buffers;
+    root_.walk([&](const node_type& nd) {
+        if (nd.is_leaf()) {
+            ++r.leaves;
+            r.leaf_bits += nd.size();
+            r.leaf_bytes += nd.space_bytes();
+        } else if (nd.is_dynamic()) {
+            ++r.dynamic_nodes;
+            r.dynamic_bytes += sizeof(dynamic_type);
+        } else if (nd.is_static()) {
+            ++r.static_views;
+            r.view_bits += nd.size();
+            r.view_bytes += sizeof(static_type);
+            buffers.push_back(&nd.as_static().buffer());
+        }
+    });
+    std::sort(buffers.begin(), buffers.end());
+    buffers.erase(std::unique(buffers.begin(), buffers.end()), buffers.end());
+    for (const auto* b : buffers) {
+        ++r.buffers;
+        r.buffer_refs += b->refcount();
+        r.buffer_bits += b->size();
+        r.live_bits += b->live_bits();
+        r.buffer_bytes += b->space_bytes();
+    }
+    return r;
 }
 
 template <uint32_t TargetArity, uint32_t MaxLeafBits, uint32_t Epsilon>
